@@ -1,0 +1,57 @@
+rules_version = '2';
+
+// =====================================================================
+//  Règles de sécurité PolyBudget
+//  1. Seul TON compte (liste ALLOWED) peut accéder à la base.
+//  2. Chaque compte ne voit que ses propres données.
+//  3. Les données écrites sont vérifiées (types, tailles, formats).
+//  Tout ce qui n'est pas explicitement autorisé est refusé.
+// =====================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ⚠️ Remplace COLLE_TON_UID_ICI par ton UID
+    // (Console Firebase > Authentification > Utilisateurs > colonne « UID de l'utilisateur »).
+    function allowed() {
+      return request.auth != null
+        && request.auth.uid in ['1pcmET76WYcAXPoesB7N6eX2k4F3'];
+    }
+
+    function isOwner(userId) {
+      return allowed() && request.auth.uid == userId;
+    }
+
+    function validSettings(d) {
+      return d.keys().hasOnly(['profile', 'name', 'theme', 'categories', 'budgets', 'monthlyBudget', 'savingsGoal', 'v'])
+        && (!('theme' in d) || d.theme in ['auto', 'light', 'dark'])
+        && (!('name' in d) || (d.name is string && d.name.size() <= 80))
+        && (!('categories' in d) || (d.categories is list && d.categories.size() <= 100))
+        && (!('budgets' in d) || (d.budgets is map && d.budgets.size() <= 100))
+        && (!('monthlyBudget' in d) || (d.monthlyBudget is int && d.monthlyBudget >= 0 && d.monthlyBudget < 100000000))
+        && (!('savingsGoal' in d) || (d.savingsGoal is int && d.savingsGoal >= 0 && d.savingsGoal < 100000000))
+        && (!('profile' in d) || (d.profile is map && d.profile.size() <= 12));
+    }
+
+    function validTx(d) {
+      return d.keys().hasOnly(['type', 'amount', 'cat', 'date', 'note', 'createdAt', 'updatedAt', 'imported'])
+        && d.type in ['in', 'out']
+        && d.amount is int && d.amount > 0 && d.amount < 100000000
+        && d.cat is string && d.cat.size() <= 64
+        && d.date is string && d.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && (!('note' in d) || (d.note is string && d.note.size() <= 200));
+    }
+
+    // Réglages, profil, catégories, budgets
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId) && validSettings(request.resource.data);
+      allow delete: if false;
+    }
+
+    // Transactions
+    match /users/{userId}/tx/{txId} {
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId) && validTx(request.resource.data);
+    }
+  }
+}
