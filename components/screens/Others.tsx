@@ -1,15 +1,16 @@
 "use client";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import styled from "styled-components";
 import { motion } from "framer-motion";
 import { ChevronRight, FileText, LogOut, Minus, Plus, Search, Trash2, Upload } from "lucide-react";
-import { useStore } from "@/lib/store";
-import { Category, HUES, Tx, TxType, centsToInput, dayLabel, money, parseAmount, ratioTone, sortTx, totals, ymLabel, ymOf } from "@/lib/format";
+import { applyStyle, currentStyle, useStore } from "@/lib/store";
+import { Category, HUES, PALETTES, Tx, TxType, centsToInput, dayLabel, money, parseAmount, ratioTone, sortTx, totals, ymLabel, ymOf } from "@/lib/format";
 import {
   AnimatedAmount, Card, CatIcon, Empty, FieldLabel, ICON_CHOICES, ICONS, Input, PillButton, Progress, Row, Screen,
   SectionHead, Segmented, Title,
 } from "../ui";
 import { TxRow } from "./Home";
+import { GoalsView } from "./Goals";
 
 const listVariants = { show: { transition: { staggerChildren: 0.03 } } };
 
@@ -124,6 +125,8 @@ const BRow = styled.div`
   .t,.s{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .t{ font-weight:500; } .s{ font-size:13px; color:var(--pb-muted); }
   .mini{ display:flex; align-items:center; gap:6px; }
+  .rest{ display:flex; justify-content:space-between; font-size:13px; color:var(--pb-muted); margin-top:7px; font-variant-numeric:tabular-nums; }
+  .rest b{ color:var(--pb-ink); font-weight:600; } .rest .over, .rest .over b{ color:var(--pb-danger); }
   .mini{ flex:none; }
   .mini input{ width:64px; height:34px; text-align:center; border:0; border-radius:var(--pb-pill); background:var(--pb-bg);
                font-weight:600; font-variant-numeric:tabular-nums; color:var(--pb-ink); }
@@ -142,7 +145,7 @@ function BudgetInput({ value, onCommit, className }: { value: number; onCommit: 
   );
 }
 
-export function Budgets() {
+export function Budgets({ view, go }: { view: "month" | "goals"; go: (t: string) => void }) {
   const { settings, txs, cats, setBudget } = useStore();
   const ym = ymOf(new Date());
   const list = txs.filter((t) => (t.date || "").startsWith(ym));
@@ -151,10 +154,18 @@ export function Budgets() {
   list.forEach((x) => { if (x.type !== "in") spent[x.cat] = (spent[x.cat] || 0) + x.amount; });
   const remain = settings.monthlyBudget - t.out;
 
+  const head = (
+    <>
+      <Title>Budgets</Title>
+      <Segmented id="bview" value={view} onChange={(v) => go(v === "goals" ? "goals" : "budgets")} options={[["month", "Mensuel"], ["goals", "Objectifs"]]} />
+    </>
+  );
+  if (view === "goals") return <Screen>{head}<GoalsView /></Screen>;
+
   return (
     <Screen>
-      <Title>Budgets</Title>
-      <BigCard>
+      {head}
+      <BigCard style={{ marginTop: 14 }}>
         <div className="lbl">Budget mensuel · {ymLabel(ym)}</div>
         <StepRow>
           <Step onClick={() => setBudget("__global", settings.monthlyBudget - 5000)} aria-label="Moins 50 €"><Minus size={20} /></Step>
@@ -195,7 +206,15 @@ export function Budgets() {
                   <Step $sm onClick={() => setBudget(c.id, b + 1000)} aria-label="Plus 10 €"><Plus size={15} /></Step>
                 </div>
               </div>
-              {b > 0 && <div style={{ marginTop: 10 }}><Progress pct={(v / b) * 100} tone={ratioTone(v, b)} /></div>}
+              {b > 0 && (
+                <>
+                  <div style={{ marginTop: 10 }}><Progress pct={(v / b) * 100} tone={ratioTone(v, b)} /></div>
+                  <div className="rest">
+                    {v <= b ? <span>Reste <b>{money(b - v)}</b></span> : <span className="over">Dépassé de <b>{money(v - b)}</b></span>}
+                    <span>{Math.round((v / b) * 100)} %</span>
+                  </div>
+                </>
+              )}
             </BRow>
           );
         })}
@@ -229,7 +248,17 @@ const Hues = styled.div`
   button.on{ box-shadow:0 0 0 2px var(--pb-bg), 0 0 0 4px var(--pb-ink); }
 `;
 
+const Swatches = styled.div`
+  display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px;
+  button{ display:flex; flex-direction:column; align-items:center; gap:8px; padding:12px 4px 10px; border-radius:16px;
+    font-size:13px; font-weight:500; color:var(--pb-muted); background:var(--pb-bg); }
+  button.on{ color:var(--pb-ink); box-shadow:inset 0 0 0 2px var(--pb-accent); }
+  i{ width:40px; height:40px; border-radius:50%; display:block; }
+`;
+
 export function SettingsScreen({ go }: { go: (t: string) => void }) {
+  const [uiStyle, setUiStyle] = useState("classic");
+  useEffect(() => { setUiStyle(currentStyle()); }, []);
   const { user, settings, cats, patchSettings, logout, exportData, importFile, wipeAll, notify, txs } = useStore();
   const fileRef = useRef<HTMLInputElement>(null);
   const [nc, setNc] = useState<{ name: string; type: TxType; icon: string; h: number }>({ name: "", type: "out", icon: "tag", h: 38 });
@@ -257,6 +286,19 @@ export function SettingsScreen({ go }: { go: (t: string) => void }) {
 
       <SectionHead><h2>Apparence</h2></SectionHead>
       <Card $pad={14}>
+        <FieldLabel>Couleur</FieldLabel>
+        <Swatches>
+          {PALETTES.map((p) => (
+            <button key={p.id} className={(settings.palette || "emeraude") === p.id ? "on" : ""} onClick={() => patchSettings({ palette: p.id })} aria-pressed={(settings.palette || "emeraude") === p.id}>
+              <i style={{ background: `linear-gradient(135deg, hsl(${p.h} ${p.s * 0.62}% 87%) 0 50%, hsl(${p.h} ${p.s}% ${p.l}%) 50% 100%)` }} />
+              {p.name}
+            </button>
+          ))}
+        </Swatches>
+        <FieldLabel style={{ marginTop: 16 }}>Style (test)</FieldLabel>
+        <Segmented id="uistyle" value={uiStyle} onChange={(v) => { applyStyle(v); setUiStyle(v); }}
+          options={[["classic", "Classique"], ["pixel", "Pixel"]]} />
+        <FieldLabel style={{ marginTop: 16 }}>Mode</FieldLabel>
         <Segmented id="theme" value={settings.theme || "auto"} onChange={(v) => patchSettings({ theme: v })}
           options={[["auto", "Automatique"], ["light", "Clair"], ["dark", "Sombre"]]} />
       </Card>

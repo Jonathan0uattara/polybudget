@@ -15,7 +15,51 @@ export interface Settings {
   profile: Profile;
   name: string; theme: "auto" | "light" | "dark"; categories: Category[];
   budgets: Record<string, number>; monthlyBudget: number; savingsGoal: number; v?: number;
+  palette?: string;
 }
+
+/* ---------- Objectifs d’achat et projets ---------- */
+export interface Deposit { d: string; a: number }
+export type Period = "day" | "week" | "month";
+export interface Goal {
+  id: string; name: string; price: number; cat: string; link?: string; photo?: string;
+  rAmount?: number; rPeriod?: Period; deposits: Deposit[]; createdAt: number;
+}
+export const GOAL_CATS = [
+  { id: "achat", name: "Achats", icon: "shopping-bag", h: 275 },
+  { id: "tech", name: "High-tech", icon: "smartphone", h: 212 },
+  { id: "projet", name: "Projets", icon: "sparkles", h: 38 },
+  { id: "commerce", name: "Commerce", icon: "briefcase", h: 157 },
+  { id: "voyage", name: "Voyages", icon: "plane", h: 190 },
+];
+export const goalCat = (id: string) => GOAL_CATS.find((c) => c.id === id) || GOAL_CATS[0];
+export const goalSaved = (g: Goal) => Math.max(0, (g.deposits || []).reduce((a, x) => a + x.a, 0));
+export const goalLeft = (g: Goal) => Math.max(0, g.price - goalSaved(g));
+export const goalScale = (price: number) => (price < 10000 ? "Petit" : price < 50000 ? "Moyen" : "Grand projet");
+export const PERIOD_LABEL: Record<Period, string> = { day: "jour", week: "semaine", month: "mois" };
+/** Date estimée d’atteinte selon le rythme choisi (null si pas de rythme). */
+export const goalEta = (g: Goal): Date | null => {
+  const left = goalLeft(g); if (!left || !g.rAmount || !g.rPeriod) return null;
+  const n = Math.ceil(left / g.rAmount); const d = new Date();
+  if (g.rPeriod === "day") d.setDate(d.getDate() + n);
+  else if (g.rPeriod === "week") d.setDate(d.getDate() + n * 7);
+  else d.setMonth(d.getMonth() + n);
+  return d;
+};
+/** Total versé sur les objectifs pendant un mois donné (AAAA-MM). */
+export const asideOf = (goals: Goal[], ym: string) =>
+  goals.reduce((a, g) => a + (g.deposits || []).filter((x) => (x.d || "").startsWith(ym)).reduce((b, x) => b + x.a, 0), 0);
+export const safeUrl = (u?: string) => { try { const x = new URL(String(u || "").trim()); return /^https?:$/.test(x.protocol) ? x.href : ""; } catch { return ""; } };
+
+/* ---------- Thèmes de couleur ---------- */
+export const PALETTES = [
+  { id: "emeraude", name: "Émeraude", h: 157, s: 85, l: 26, dl: 56 },
+  { id: "ocean", name: "Océan", h: 214, s: 85, l: 40, dl: 68 },
+  { id: "lavande", name: "Lavande", h: 262, s: 62, l: 48, dl: 74 },
+  { id: "rose", name: "Rose", h: 335, s: 75, l: 42, dl: 72 },
+  { id: "corail", name: "Corail", h: 16, s: 85, l: 40, dl: 68 },
+  { id: "graphite", name: "Graphite", h: 220, s: 8, l: 20, dl: 86 },
+];
 
 export const DEFAULT_CATS: Category[] = [
   { id: "alim", name: "Alimentation", icon: "utensils", h: 38, type: "out" },

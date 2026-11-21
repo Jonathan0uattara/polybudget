@@ -8,7 +8,7 @@ import {
   DocumentReference, CollectionReference, Firestore,
 } from "firebase/firestore";
 import { fb } from "./firebase";
-import { Category, DEFAULT_CATS, HUES, Settings, Tx, TxType, defaultSettings, emptyProfile, todayISO, pad } from "./format";
+import { Category, DEFAULT_CATS, Goal, HUES, Settings, Tx, TxType, defaultSettings, emptyProfile, goalSaved, todayISO, pad } from "./format";
 
 type Status = "loading" | "auth" | "ready" | "error" | "forbidden";
 interface Toast { id: number; msg: string }
@@ -22,6 +22,9 @@ interface Store {
   notify: (msg: string) => void; exportData: (f: "csv" | "json") => void;
   importFile: (file: File) => Promise<void>; wipeAll: () => Promise<void>;
   cats: Category[]; catById: (id: string) => Category;
+  goals: Goal[]; goalsBlocked: boolean;
+  saveGoal: (data: Omit<Goal, "id" | "deposits" | "createdAt">, id?: string) => void;
+  deleteGoal: (id: string) => void; depositGoal: (id: string, cents: number) => void;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -32,6 +35,37 @@ export function applyTheme(t: string) {
   const el = document.documentElement;
   if (t === "light" || t === "dark") el.dataset.theme = t; else delete el.dataset.theme;
   try { t === "auto" ? localStorage.removeItem("pb-theme") : localStorage.setItem("pb-theme", t); } catch {}
+}
+
+/** Style d’interface (test) : "pixel" = matrice de points. Réglage propre à l’appareil, non synchronisé. */
+export function applyStyle(v: string) {
+  if (typeof document === "undefined") return;
+  if (v === "pixel") document.documentElement.dataset.style = "pixel"; else delete document.documentElement.dataset.style;
+  try { localStorage.setItem("pb-style", v === "pixel" ? "pixel" : "classic"); } catch {}
+}
+/** Réapplique le style après le démarrage de l’app (au cas où la page aurait été réinitialisée au chargement). */
+export function initStyle() {
+  if (typeof document === "undefined") return;
+  let v = process.env.NEXT_PUBLIC_STYLE === "pixel" ? "pixel" : "classic";
+  try { const x = localStorage.getItem("pb-style"); if (x) v = x; } catch {}
+  if (v === "pixel") document.documentElement.dataset.style = "pixel"; else delete document.documentElement.dataset.style;
+}
+export const currentStyle = () => (typeof document !== "undefined" && document.documentElement.dataset.style === "pixel" ? "pixel" : "classic");
+
+export function applyPalette(p?: string) {
+  if (typeof document === "undefined") return;
+  const el = document.documentElement;
+  if (p && p !== "emeraude") el.dataset.palette = p; else delete el.dataset.palette;
+  try { p && p !== "emeraude" ? localStorage.setItem("pb-palette", p) : localStorage.removeItem("pb-palette"); } catch {}
+}
+
+function demoGoals(): Goal[] {
+  const d = todayISO(); const m = d.slice(0, 8);
+  return [
+    { id: "g1", name: "Chaise gaming", price: 15000, cat: "achat", link: "https://www.example.com/chaise", rAmount: 5000, rPeriod: "month", deposits: [{ d: m + "02", a: 5000 }], createdAt: 3 },
+    { id: "g2", name: "Écran 27 pouces", price: 22900, cat: "tech", rAmount: 1000, rPeriod: "day", deposits: [{ d: m + "01", a: 4000 }, { d: m + "05", a: 3000 }], createdAt: 2 },
+    { id: "g3", name: "Stock kits Arduino", price: 80000, cat: "commerce", rAmount: 10000, rPeriod: "month", deposits: [{ d: "2026-09-10", a: 20000 }, { d: "2026-10-10", a: 12000 }], createdAt: 1 },
+  ];
 }
 
 function demoTxs(): Tx[] {
@@ -54,7 +88,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [toast, setToast] = useState<Toast | null>(null);
   const [success, setSuccess] = useState(0);
   const [authError, setAuthError] = useState("");
-  const refs = useRef<{ db?: Firestore; appRef?: DocumentReference; txCol?: CollectionReference }>({});
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [goalsBlocked, setGoalsBlocked] = useState(false);
+  const refs = useRef<{ db?: Firestore; appRef?: DocumentReference; txCol?: CollectionReference; goalCol?: CollectionReference }>({});
   const toastTimer = useRef<any>();
   const budgetTimers = useRef<Record<string, any>>({});
 
@@ -75,7 +111,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     // Mode démo (NEXT_PUBLIC_DEMO=1) : fausses données, aucune connexion à Firebase.
     if (process.env.NEXT_PUBLIC_DEMO === "1") {
       setUser({ displayName: "Ouattara Démo", email: "demo@polybudget.app", photoURL: null } as any);
-      setTxs(demoTxs()); setSettings({ ...defaultSettings(), profile: { ...emptyProfile(), firstName: "Ouattara", lastName: "Démo", birthDate: "2003-05-14", city: "Annecy", status: "etudiant", org: "Polytech Annecy-Chambéry" }, monthlyBudget: 90000, savingsGoal: 20000, budgets: { alim: 25000, loisirs: 8000 } });
+      setTxs(demoTxs()); setGoals(demoGoals()); setSettings({ ...defaultSettings(), profile: { ...emptyProfile(), firstName: "Ouattara", lastName: "Démo", birthDate: "2003-05-14", city: "Annecy", status: "etudiant", org: "Polytech Annecy-Chambéry" }, monthlyBudget: 90000, savingsGoal: 20000, budgets: { alim: 25000, loisirs: 8000 } });
       setStatus("ready"); return;
     }
     const { auth, db } = fb();
@@ -83,11 +119,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     let unsubs: (() => void)[] = [];
     const off = onAuthStateChanged(auth, (u) => {
       unsubs.forEach((f) => f()); unsubs = [];
-      if (!u) { setUser(null); setTxs([]); setStatus("auth"); return; }
+      if (!u) { setUser(null); setTxs([]); setGoals([]); setStatus("auth"); return; }
       setUser(u); setStatus("loading");
       const appRef = doc(db, "users", u.uid);
       const txCol = collection(db, "users", u.uid, "tx");
-      refs.current = { db, appRef, txCol };
+      const goalCol = collection(db, "users", u.uid, "goals");
+      refs.current = { db, appRef, txCol, goalCol };
       let gotS = false, gotT = false, init = false;
       // Compte non autorisé par les règles Firestore → écran dédié
       const onSnapErr = (e: any) => { console.error(e); setStatus(String(e?.code || "").includes("permission") ? "forbidden" : "error"); };
@@ -109,11 +146,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         setTxs(qs.docs.map((d) => ({ id: d.id, ...(d.data() as any) })).filter((t) => typeof t.amount === "number"));
         gotT = true; ready();
       }, onSnapErr));
+      // Les objectifs ne bloquent jamais l’app : si les règles Firestore ne les autorisent pas encore, on le signale seulement.
+      unsubs.push(onSnapshot(goalCol, (qs) => {
+        setGoalsBlocked(false);
+        setGoals(qs.docs.map((d) => ({ deposits: [], ...(d.data() as any), id: d.id }))
+          .filter((g) => typeof g.price === "number").sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
+      }, (e) => { console.error(e); setGoalsBlocked(true); }));
     });
     return () => { off(); unsubs.forEach((f) => f()); };
   }, [fail]);
 
   useEffect(() => { applyTheme(settings.theme); }, [settings.theme]);
+  useEffect(() => { if (status === "ready") applyPalette(settings.palette); }, [settings.palette, status]);
 
   /* ---------- Actions ---------- */
   const signIn = useCallback(async () => {
@@ -168,6 +212,39 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       persist(key === "__global" ? { monthlyBudget: cents } : key === "__save" ? { savingsGoal: cents } : { [`budgets.${key}`]: cents });
     }, 600);
   }, [persist]);
+
+  /* ---------- Objectifs ---------- */
+  const saveGoal = useCallback((data: Omit<Goal, "id" | "deposits" | "createdAt">, id?: string) => {
+    const clean: any = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined && v !== ""));
+    const { goalCol } = refs.current;
+    if (!goalCol) { // mode démo
+      setGoals((l) => id ? l.map((g) => (g.id === id ? { ...g, ...data } : g)) : [{ ...data, id: "g" + Date.now(), deposits: [], createdAt: Date.now() } as Goal, ...l]);
+    } else if (id) {
+      const prev = goals.find((g) => g.id === id);
+      setDoc(doc(goalCol, id), { ...clean, deposits: prev?.deposits || [], createdAt: prev?.createdAt || Date.now() }).catch(fail);
+    } else setDoc(doc(goalCol), { ...clean, deposits: [], createdAt: Date.now() }).catch(fail);
+    notify(id ? "Objectif mis à jour" : "Objectif créé");
+  }, [goals, fail, notify]);
+
+  const deleteGoal = useCallback((id: string) => {
+    const { goalCol } = refs.current;
+    if (!goalCol) setGoals((l) => l.filter((g) => g.id !== id)); else deleteDoc(doc(goalCol, id)).catch(fail);
+    notify("Objectif supprimé");
+  }, [fail, notify]);
+
+  const depositGoal = useCallback((id: string, cents: number) => {
+    const g = goals.find((x) => x.id === id); if (!g || !cents) return;
+    const saved = goalSaved(g);
+    if (cents < 0) cents = -Math.min(saved, -cents);           // on ne retire pas plus que ce qui a été mis
+    if (!cents) return;
+    const deposits = [...(g.deposits || []), { d: todayISO(), a: cents }].slice(-300);
+    const { goalCol } = refs.current;
+    if (!goalCol) setGoals((l) => l.map((x) => (x.id === id ? { ...x, deposits } : x)));
+    else updateDoc(doc(goalCol, id), { deposits }).catch(fail);
+    const reached = cents > 0 && saved < g.price && saved + cents >= g.price;
+    if (cents > 0) setSuccess((n) => n + 1);
+    notify(reached ? `Objectif atteint : ${g.name} !` : cents > 0 ? "Versement ajouté" : "Retrait enregistré");
+  }, [goals, fail, notify]);
 
   const cats = settings.categories;
   const catById = useCallback((id: string): Category =>
@@ -267,7 +344,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<Store>(() => ({
     status, user, settings, txs, toast, success, authError, signIn, logout, saveTx, deleteTx,
     patchSettings, setBudget, notify, exportData, importFile, wipeAll, cats, catById,
-  }), [status, user, settings, txs, toast, success, authError, signIn, logout, saveTx, deleteTx,
+    goals, goalsBlocked, saveGoal, deleteGoal, depositGoal,
+  }), [goals, goalsBlocked, saveGoal, deleteGoal, depositGoal, status, user, settings, txs, toast, success, authError, signIn, logout, saveTx, deleteTx,
     patchSettings, setBudget, notify, exportData, importFile, wipeAll, cats, catById]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

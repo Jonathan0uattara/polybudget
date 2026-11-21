@@ -2,9 +2,10 @@
 import React, { useMemo } from "react";
 import styled from "styled-components";
 import { motion } from "framer-motion";
-import { ArrowDownLeft, ChevronLeft, ChevronRight, FileText, Plus, Search, Sparkles, Target } from "lucide-react";
+import { ArrowDownLeft, PiggyBank, ChevronLeft, ChevronRight, FileText, Plus, Search, Sparkles } from "lucide-react";
 import { useStore } from "@/lib/store";
-import { Tx, byCat, money, moneyShort, ratioTone, shiftYM, shortDate, sortTx, totals, ymMonth, ymOf, ymShort } from "@/lib/format";
+import { Tx, asideOf, byCat, goalLeft, goalSaved, money, moneyShort, ratioTone, shiftYM, shortDate, sortTx, totals, ymMonth, ymOf, ymShort } from "@/lib/format";
+import { GoalPhoto } from "./Goals";
 import { AnimatedAmount, Card, CatIcon, Empty, LinkButton, Progress, RoundButton, Row, Screen, SectionHead } from "../ui";
 
 const Hero = styled.section`
@@ -32,10 +33,13 @@ const MonthSwitch = styled.div`
   button:disabled{ opacity:.25; }
   span{ min-width:132px; text-transform:capitalize; }
 `;
-const Flows = styled.div`
-  display:inline-flex; gap:14px; margin-top:16px; padding:8px 16px; border-radius:var(--pb-pill);
-  background:var(--pb-glass); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); font-size:14px; font-weight:500;
-  .in{ color:var(--pb-income); } .sep{ color:var(--pb-line); }
+const Tiles = styled.div`
+  display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:20px auto 0; max-width:440px;
+  > button, > div{ background:var(--pb-glass); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    border-radius:16px; padding:10px 8px; text-align:center; min-width:0; }
+  .l{ font-size:12px; color:var(--pb-muted); font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .v{ font-family:var(--pb-font-display); font-weight:600; font-size:16px; margin-top:2px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .v.over{ color:var(--pb-danger); } .v.link{ color:var(--pb-accent); font-size:14px; }
 `;
 const Actions = styled.div`
   display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:28px auto 0; max-width:400px;
@@ -48,10 +52,19 @@ const Action = styled(motion.button)`
 `;
 const SpendCard = styled(Card)`
   padding:20px;
-  .row{ display:flex; justify-content:space-between; align-items:flex-end; gap:12px; }
-  .lbl{ color:var(--pb-muted); font-size:14px; font-weight:500; }
-  .v{ font-family:var(--pb-font-display); font-weight:500; font-size:30px; letter-spacing:-.02em; margin-top:4px; }
-  .meta{ font-size:13px; color:var(--pb-muted); text-align:right; }
+  .cols{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .lbl{ color:var(--pb-muted); font-size:13px; font-weight:500; }
+  .v{ font-family:var(--pb-font-display); font-weight:500; font-size:22px; letter-spacing:-.02em; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .v.in{ color:var(--pb-income); }
+`;
+const GoalStrip = styled.div`
+  display:flex; gap:10px; overflow-x:auto; margin:0 -16px; padding:0 16px 4px; scrollbar-width:none;
+  &::-webkit-scrollbar{ display:none; }
+`;
+const MiniGoal = styled(motion.button)`
+  flex:none; width:168px; text-align:left; background:var(--pb-surface); border-radius:var(--pb-r-md); padding:12px;
+  .n{ font-weight:600; font-size:14px; margin:10px 0 8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .s{ font-size:12px; color:var(--pb-muted); margin-top:6px; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 `;
 const Bars = styled.div`
   display:grid; grid-template-columns:repeat(6,1fr); gap:10px; align-items:end; height:96px; margin-top:20px;
@@ -74,7 +87,7 @@ const itemVariants = { hidden: { opacity: 0, y: 8 }, show: { opacity: 1, y: 0 } 
 export default function Home({ month, setMonth, openTx, onEdit, go }: {
   month: string; setMonth: (m: string) => void; openTx: (type?: "in" | "out") => void; onEdit: (t: Tx) => void; go: (tab: string) => void;
 }) {
-  const { user, settings, txs, catById } = useStore();
+  const { user, settings, txs, catById, goals } = useStore();
   const isNow = month === ymOf(new Date());
   const list = useMemo(() => txs.filter((t) => (t.date || "").startsWith(month)), [txs, month]);
   const t = totals(list);
@@ -84,6 +97,13 @@ export default function Home({ month, setMonth, openTx, onEdit, go }: {
   const max = Math.max(...monthOut, 1);
   const cats = Object.entries(byCat(list)).sort((a, b) => b[1] - a[1]);
   const recent = sortTx(list).slice(0, 5);
+  const aside = asideOf(goals, month);                       // versé sur les objectifs ce mois-ci
+  const available = t.bal - aside;                           // ce qu’il reste réellement de disponible
+  const budget = settings.monthlyBudget;
+  const now = new Date();
+  const daysLeft = isNow ? new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() - now.getDate() + 1 : 0;
+  const remain = budget - t.out;
+  const topGoals = [...goals].filter((g) => goalLeft(g) > 0).slice(0, 4);
   const first = (settings.profile?.firstName || settings.name || user?.displayName || "").trim().split(" ")[0];
 
   let insight: React.ReactNode;
@@ -93,7 +113,7 @@ export default function Home({ month, setMonth, openTx, onEdit, go }: {
     insight = r >= 0 ? <>Il te reste <b>{money(r)}</b> sur ton budget de {ymMonth(month)}. Belle maîtrise{first ? `, ${first}` : ""} !</>
       : <>Budget dépassé de <b>{money(-r)}</b>. Pas de panique : on ajuste et on rebondit le mois prochain.</>;
   } else if (prevOut > 0 && t.out < prevOut) insight = <><b>{money(prevOut - t.out)}</b> de dépenses en moins que le mois dernier. Bravo !</>;
-  else if (t.bal > 0) insight = <>Solde positif : tu mets <b>{money(t.bal)}</b> de côté ce mois-ci. Continue comme ça !</>;
+  else if (available > 0) insight = <>Solde positif : il te reste <b>{money(available)}</b> de disponible ce mois-ci. Continue comme ça !</>;
   else insight = <>Fixe un budget mensuel pour suivre ce qu’il te reste à dépenser.</>;
 
   return (
@@ -111,19 +131,30 @@ export default function Home({ month, setMonth, openTx, onEdit, go }: {
           <BalanceZone>
             <MonthSwitch>
               <button onClick={() => setMonth(shiftYM(month, -1))} aria-label="Mois précédent"><ChevronLeft size={18} /></button>
-              <span>Solde · {ymMonth(month)}</span>
+              <span>Disponible · {ymMonth(month)}</span>
               <button onClick={() => setMonth(shiftYM(month, 1))} disabled={isNow} aria-label="Mois suivant"><ChevronRight size={18} /></button>
             </MonthSwitch>
-            <div style={{ marginTop: 10 }}><AnimatedAmount cents={t.bal} size={58} /></div>
-            <Flows>
-              <span className="in">+{money(t.inc)}</span><span className="sep">|</span><span>−{money(t.out)}</span>
-            </Flows>
+            <div style={{ marginTop: 10 }}><AnimatedAmount cents={available} size={58} /></div>
+            <Tiles>
+              <button onClick={() => go("budgets")}>
+                <div className="l">Reste du budget</div>
+                {budget > 0 ? <div className={`v ${remain < 0 ? "over" : ""}`}>{moneyShort(remain)}</div> : <div className="v link">Définir</div>}
+              </button>
+              <button onClick={() => go("budgets")}>
+                <div className="l">{isNow ? `Par jour · ${daysLeft} j` : "Budget"}</div>
+                <div className="v">{budget > 0 ? (isNow ? moneyShort(Math.max(0, remain) / daysLeft) : moneyShort(budget)) : "—"}</div>
+              </button>
+              <button onClick={() => go("goals")}>
+                <div className="l">Mis de côté</div>
+                <div className="v">{moneyShort(aside)}</div>
+              </button>
+            </Tiles>
           </BalanceZone>
 
           <Actions>
             <Action className="primary" whileTap={{ scale: 0.92 }} onClick={() => openTx("out")}><span className="c"><Plus size={24} /></span>Dépense</Action>
             <Action whileTap={{ scale: 0.92 }} onClick={() => openTx("in")}><span className="c"><ArrowDownLeft size={22} /></span>Revenu</Action>
-            <Action whileTap={{ scale: 0.92 }} onClick={() => go("budgets")}><span className="c"><Target size={22} /></span>Budgets</Action>
+            <Action whileTap={{ scale: 0.92 }} onClick={() => go("goals")}><span className="c"><PiggyBank size={22} /></span>Objectifs</Action>
             <Action whileTap={{ scale: 0.92 }} onClick={() => go("report")}><span className="c"><FileText size={22} /></span>Rapport</Action>
           </Actions>
         </Inner>
@@ -131,11 +162,11 @@ export default function Home({ month, setMonth, openTx, onEdit, go }: {
 
       <Screen style={{ paddingTop: 16 }}>
         <SpendCard>
-          <div className="row">
-            <div><div className="lbl">Dépensé en {ymMonth(month)}</div><div className="v">{money(t.out)}</div></div>
-            <div className="meta">{settings.monthlyBudget ? <>sur {moneyShort(settings.monthlyBudget)}</> : <LinkButton onClick={() => go("budgets")}>Fixer un budget</LinkButton>}</div>
+          <div className="cols">
+            <div><div className="lbl">Revenus</div><div className="v in">+{money(t.inc)}</div></div>
+            <div><div className="lbl">Dépenses</div><div className="v">−{money(t.out)}</div></div>
           </div>
-          {settings.monthlyBudget > 0 && <div style={{ marginTop: 12 }}><Progress pct={(t.out / settings.monthlyBudget) * 100} tone={ratioTone(t.out, settings.monthlyBudget)} /></div>}
+          {budget > 0 && <div style={{ marginTop: 14 }}><Progress pct={(t.out / budget) * 100} tone={ratioTone(t.out, budget)} /></div>}
           <Bars aria-label="Dépenses des six derniers mois">
             {months.map((m, i) => (
               <button className="col" key={m} onClick={() => setMonth(m)} title={`${ymMonth(m)} : ${money(monthOut[i])}`}>
@@ -150,6 +181,22 @@ export default function Home({ month, setMonth, openTx, onEdit, go }: {
         <Insight initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
           <Sparkles size={20} /><div>{insight}</div>
         </Insight>
+
+        <SectionHead><h2>Objectifs</h2><LinkButton onClick={() => go("goals")}>{goals.length ? "Tout voir" : "Créer"}</LinkButton></SectionHead>
+        {topGoals.length ? (
+          <GoalStrip>
+            {topGoals.map((g) => { const sv = goalSaved(g); return (
+              <MiniGoal key={g.id} whileTap={{ scale: 0.97 }} onClick={() => go("goals")}>
+                <GoalPhoto goal={g} size={56} radius={14} />
+                <div className="n">{g.name}</div>
+                <Progress pct={(sv / (g.price || 1)) * 100} />
+                <div className="s">reste {money(g.price - sv)}</div>
+              </MiniGoal>
+            ); })}
+          </GoalStrip>
+        ) : (
+          <Card><Empty><b>{goals.length ? "Tous tes objectifs sont atteints" : "Un achat en vue ?"}</b>Crée un objectif avec sa photo et mets de côté à ton rythme.</Empty></Card>
+        )}
 
         <SectionHead><h2>Transactions</h2><LinkButton onClick={() => go("history")}>Tout voir</LinkButton></SectionHead>
         <Card>
@@ -171,7 +218,7 @@ export default function Home({ month, setMonth, openTx, onEdit, go }: {
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                     <span className="t">{c.name}</span><span className="amt">{money(v)}</span>
                   </div>
-                  <div className="s" style={{ marginBottom: 8 }}>{b ? `sur ${money(b)} prévus` : `${Math.round((v / (t.out || 1)) * 100)} % des dépenses`}</div>
+                  <div className="s" style={{ marginBottom: 8 }}>{b ? (v <= b ? `reste ${money(b - v)} sur ${money(b)}` : `dépassé de ${money(v - b)}`) : `${Math.round((v / (t.out || 1)) * 100)} % des dépenses`}</div>
                   <Progress pct={(v / (b || t.out || 1)) * 100} tone={b ? ratioTone(v, b) : "ok"} />
                 </div>
               </Row>

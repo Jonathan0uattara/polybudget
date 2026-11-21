@@ -140,7 +140,7 @@ export function Success({ tick }: { tick: number }) {
     <AnimatePresence>
       {show && (
         <SuccessWrap key={tick} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-          <Circle initial={{ scale: 0.4 }} animate={{ scale: 1 }} exit={{ scale: 0.8 }}
+          <Circle className="pb-success" initial={{ scale: 0.4 }} animate={{ scale: 1 }} exit={{ scale: 0.8 }}
             transition={{ type: "spring", stiffness: 420, damping: 18 }}>
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
               <motion.path d="M5 12.5l4.5 4.5L19 7.5" stroke="var(--pb-on-accent)" strokeWidth="2.6"

@@ -114,8 +114,8 @@ const Fill = styled(motion.div)<{ $tone: string }>`
 `;
 export function Progress({ pct, tone = "ok" }: { pct: number; tone?: string }) {
   return (
-    <Track>
-      <Fill $tone={tone} initial={{ width: 0 }} animate={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
+    <Track className="pb-track">
+      <Fill className="pb-fill" data-tone={tone} $tone={tone} initial={{ width: 0 }} animate={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
         transition={{ duration: 0.7, ease: [0.2, 0.8, 0.2, 1] }} />
     </Track>
   );

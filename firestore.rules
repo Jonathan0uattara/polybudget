@@ -22,7 +22,8 @@ service cloud.firestore {
     }
 
     function validSettings(d) {
-      return d.keys().hasOnly(['profile', 'name', 'theme', 'categories', 'budgets', 'monthlyBudget', 'savingsGoal', 'v'])
+      return d.keys().hasOnly(['profile', 'name', 'theme', 'categories', 'budgets', 'monthlyBudget', 'savingsGoal', 'v', 'palette'])
+        && (!('palette' in d) || (d.palette is string && d.palette.size() <= 20))
         && (!('theme' in d) || d.theme in ['auto', 'light', 'dark'])
         && (!('name' in d) || (d.name is string && d.name.size() <= 80))
         && (!('categories' in d) || (d.categories is list && d.categories.size() <= 100))
@@ -46,6 +47,24 @@ service cloud.firestore {
       allow read: if isOwner(userId);
       allow create, update: if isOwner(userId) && validSettings(request.resource.data);
       allow delete: if false;
+    }
+
+    function validGoal(d) {
+      return d.keys().hasOnly(['name', 'price', 'cat', 'link', 'photo', 'rAmount', 'rPeriod', 'deposits', 'createdAt'])
+        && d.name is string && d.name.size() > 0 && d.name.size() <= 80
+        && d.price is int && d.price > 0 && d.price < 1000000000
+        && d.cat is string && d.cat.size() <= 32
+        && (!('link' in d) || (d.link is string && d.link.size() <= 600 && d.link.matches('^https?://.*')))
+        && (!('photo' in d) || (d.photo is string && d.photo.size() <= 400000 && d.photo.matches('^data:image/jpeg;base64,.*')))
+        && (!('rAmount' in d) || (d.rAmount is int && d.rAmount > 0))
+        && (!('rPeriod' in d) || d.rPeriod in ['day', 'week', 'month'])
+        && d.deposits is list && d.deposits.size() <= 300;
+    }
+
+    // Objectifs d'achat et projets
+    match /users/{userId}/goals/{goalId} {
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId) && validGoal(request.resource.data);
     }
 
     // Transactions

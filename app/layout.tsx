@@ -20,7 +20,8 @@ export const viewport: Viewport = {
 };
 
 // Applique le thème choisi avant l’affichage pour éviter un flash de couleur.
-const themeScript = `try{var t=localStorage.getItem("pb-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}`;
+const defaultStyle = process.env.NEXT_PUBLIC_STYLE === "pixel" ? "pixel" : "";
+const themeScript = `(function(){var d=document.documentElement,s="${defaultStyle}";try{var t=localStorage.getItem("pb-theme");if(t)d.dataset.theme=t;var p=localStorage.getItem("pb-palette");if(p)d.dataset.palette=p;var x=localStorage.getItem("pb-style");if(x)s=x==="pixel"?"pixel":""}catch(e){}if(s)d.dataset.style=s})()`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -31,7 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link
           rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Manrope:wght@500;600&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Manrope:wght@500;600&family=Doto:wght@800&family=Space+Mono:wght@400;700&display=swap"
         />
       </head>
       <body>

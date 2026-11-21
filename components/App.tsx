@@ -4,7 +4,7 @@ import styled from "styled-components";
 import { AnimatePresence, motion } from "framer-motion";
 import { House, List, Plus, Settings2, Target } from "lucide-react";
 import { GlobalStyle } from "@/styles/GlobalStyle";
-import { StoreProvider, useStore } from "@/lib/store";
+import { StoreProvider, initStyle, useStore } from "@/lib/store";
 import { Tx, ymOf } from "@/lib/format";
 import Home from "./screens/Home";
 import { Budgets, History, Login, SettingsScreen } from "./screens/Others";
@@ -15,6 +15,7 @@ import { Success, Toast } from "./overlays";
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
 export default function App() {
+  useEffect(() => { initStyle(); }, []);
   useEffect(() => {
     if ("serviceWorker" in navigator && process.env.NODE_ENV === "production")
       navigator.serviceWorker.register(`${BASE}/sw.js`, { scope: `${BASE}/` }).catch(() => {});
@@ -106,7 +107,7 @@ function Forbidden() {
 function Shell() {
   const { status, toast, success } = useStore();
   const [tab, setTab] = useState("home");
-  const navTab = tab === "profile" ? "settings" : tab === "report" ? "home" : tab;
+  const navTab = tab === "profile" ? "settings" : tab === "report" ? "home" : tab === "goals" ? "budgets" : tab;
   const [month, setMonth] = useState(ymOf(new Date()));
   const [sheet, setSheet] = useState<SheetState>(null);
 
@@ -132,7 +133,7 @@ function Shell() {
 
   const screen =
     tab === "history" ? <History onEdit={onEdit} /> :
-    tab === "budgets" ? <Budgets /> :
+    tab === "budgets" || tab === "goals" ? <Budgets view={tab === "goals" ? "goals" : "month"} go={go} /> :
     tab === "settings" ? <SettingsScreen go={go} /> :
     tab === "profile" ? <ProfileScreen onBack={() => go("settings")} /> :
     tab === "report" ? <ReportScreen onBack={() => go("home")} /> :
@@ -152,7 +153,7 @@ function Shell() {
       </Side>
 
       <AnimatePresence mode="wait" initial={false}>
-        <motion.main key={tab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
+        <motion.main key={navTab === "budgets" ? "budgets" : tab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
           transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}>
           {screen}
         </motion.main>
