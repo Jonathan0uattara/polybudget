@@ -7,7 +7,8 @@ import { GlobalStyle } from "@/styles/GlobalStyle";
 import { StoreProvider, initStyle, useStore } from "@/lib/store";
 import { Tx, ymOf } from "@/lib/format";
 import Home from "./screens/Home";
-import { Budgets, History, Login, SettingsScreen } from "./screens/Others";
+import { Budgets, History, SettingsScreen } from "./screens/Others";
+import { InviteGate, Login, VerifyEmail } from "./screens/Access";
 import { ProfileScreen, ReportScreen } from "./screens/ProfileReport";
 import TxSheet, { SheetState } from "./TxSheet";
 import { Success, Toast } from "./overlays";
@@ -86,24 +87,6 @@ const Splash = styled.div`
   .logo i:last-child{ background:var(--pb-gold); }
 `;
 
-function Forbidden() {
-  const { user, logout } = useStore();
-  return (
-    <Splash>
-      <div style={{ textAlign: "center", padding: 24, maxWidth: 380 }}>
-        <div style={{ fontSize: 40 }}>🔒</div>
-        <h2 style={{ fontFamily: "var(--pb-font-display)", fontWeight: 600, margin: "12px 0 8px" }}>Accès réservé</h2>
-        <p style={{ color: "var(--pb-muted)", margin: "0 0 20px" }}>
-          Le compte {user?.email} n’est pas autorisé à utiliser cette application.
-        </p>
-        <button onClick={logout} style={{ height: 48, padding: "0 24px", borderRadius: 999, background: "var(--pb-ink)", color: "var(--pb-bg)", fontWeight: 600 }}>
-          Changer de compte
-        </button>
-      </div>
-    </Splash>
-  );
-}
-
 function Shell() {
   const { status, toast, success } = useStore();
   const [tab, setTab] = useState("home");
@@ -123,7 +106,8 @@ function Shell() {
     </Splash>
   );
   if (status === "auth") return <><Login /><Toast toast={toast} /></>;
-  if (status === "forbidden") return <Forbidden />;
+  if (status === "verify") return <><VerifyEmail /><Toast toast={toast} /></>;
+  if (status === "forbidden") return <><InviteGate /><Toast toast={toast} /></>;
   if (status === "error") return (
     <Splash><div style={{ textAlign: "center", padding: 24, maxWidth: 360 }}>
       <b>Connexion à la base impossible.</b>

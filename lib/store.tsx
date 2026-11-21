@@ -2,21 +2,29 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, User,
+  createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, deleteUser,
 } from "firebase/auth";
 import {
-  doc, collection, onSnapshot, query, orderBy, limit, setDoc, updateDoc, deleteDoc, writeBatch,
+  doc, collection, onSnapshot, query, orderBy, limit, setDoc, updateDoc, deleteDoc, writeBatch, serverTimestamp, increment,
   DocumentReference, CollectionReference, Firestore,
 } from "firebase/firestore";
 import { fb } from "./firebase";
 import { Category, DEFAULT_CATS, Goal, HUES, Settings, Tx, TxType, defaultSettings, emptyProfile, goalSaved, todayISO, pad } from "./format";
 
-type Status = "loading" | "auth" | "ready" | "error" | "forbidden";
+type Status = "loading" | "auth" | "verify" | "ready" | "error" | "forbidden";
 interface Toast { id: number; msg: string }
 
 interface Store {
   status: Status; user: User | null; settings: Settings; txs: Tx[];
   toast: Toast | null; success: number; authError: string;
   signIn: () => void; logout: () => void;
+  authBusy: boolean; setAuthError: (m: string) => void;
+  signInEmail: (email: string, pw: string) => Promise<void>;
+  signUpEmail: (email: string, pw: string, code: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
+  redeemCode: (code: string) => Promise<void>;
+  checkVerified: () => Promise<void>; resendVerification: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
   saveTx: (data: Omit<Tx, "id">, id?: string) => void; deleteTx: (id: string) => void;
   patchSettings: (patch: Partial<Settings>) => void; setBudget: (key: string, cents: number) => void;
   notify: (msg: string) => void; exportData: (f: "csv" | "json") => void;
@@ -28,6 +36,31 @@ interface Store {
 }
 
 const Ctx = createContext<Store | null>(null);
+
+/** Messages d’erreur de connexion compréhensibles. */
+function authMessage(e: any): string {
+  const c = String(e?.code || "");
+  if (c === "invite") return "Code d’invitation invalide, ou toutes ses places sont déjà prises.";
+  if (["auth/invalid-credential", "auth/wrong-password", "auth/user-not-found", "auth/invalid-login-credentials"].includes(c)) return "E-mail ou mot de passe incorrect.";
+  if (c === "auth/email-already-in-use") return "Un compte existe déjà avec cet e-mail. Connecte-toi plutôt.";
+  if (c === "auth/weak-password") return "Mot de passe trop court : 8 caractères minimum.";
+  if (c === "auth/invalid-email") return "Cette adresse e-mail n’est pas valide.";
+  if (c === "auth/too-many-requests") return "Trop de tentatives. Patiente quelques minutes.";
+  if (c === "auth/network-request-failed") return "Pas de connexion internet.";
+  if (c === "auth/operation-not-allowed") return "La connexion par e-mail n’est pas encore activée dans Firebase.";
+  if (c === "auth/unauthorized-domain") return "Domaine non autorisé : ajoute cette adresse dans Firebase > Authentification > Paramètres.";
+  return "Connexion impossible, réessaie.";
+}
+export const normCode = (c: string) => c.trim().toUpperCase().replace(/\s+/g, "");
+const isPasswordUser = (u: User) => u.providerData.some((p) => p.providerId === "password");
+
+/** Utilise une place du code d’invitation : crée la fiche membre et décompte la place en une seule opération. */
+async function redeem(db: Firestore, uid: string, code: string) {
+  const b = writeBatch(db);
+  b.set(doc(db, "members", uid), { code, at: serverTimestamp() });
+  b.update(doc(db, "invites", code), { remaining: increment(-1) });
+  try { await b.commit(); } catch { throw { code: "invite" }; }
+}
 export const useStore = () => useContext(Ctx)!;
 
 export function applyTheme(t: string) {
@@ -88,6 +121,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [toast, setToast] = useState<Toast | null>(null);
   const [success, setSuccess] = useState(0);
   const [authError, setAuthError] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [nonce, setNonce] = useState(0);          // relance les abonnements (après un code validé ou un e-mail vérifié)
+  const deleting = useRef(false);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [goalsBlocked, setGoalsBlocked] = useState(false);
   const refs = useRef<{ db?: Firestore; appRef?: DocumentReference; txCol?: CollectionReference; goalCol?: CollectionReference }>({});
@@ -120,7 +156,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const off = onAuthStateChanged(auth, (u) => {
       unsubs.forEach((f) => f()); unsubs = [];
       if (!u) { setUser(null); setTxs([]); setGoals([]); setStatus("auth"); return; }
-      setUser(u); setStatus("loading");
+      setUser(u);
+      // Comptes e-mail : accès seulement après vérification de l’adresse.
+      if (isPasswordUser(u) && !u.emailVerified) { setStatus("verify"); return; }
+      setStatus("loading");
       const appRef = doc(db, "users", u.uid);
       const txCol = collection(db, "users", u.uid, "tx");
       const goalCol = collection(db, "users", u.uid, "goals");
@@ -131,7 +170,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       const ready = () => { if (gotS && gotT) setStatus("ready"); };
       unsubs.push(onSnapshot(appRef, (s: any) => {
         if (!s.exists()) {
-          if (!init && !s.metadata.fromCache) { init = true; setDoc(appRef, defaultSettings()).catch(fail); }
+          if (!init && !s.metadata.fromCache && !deleting.current) { init = true; setDoc(appRef, defaultSettings()).catch(fail); }
           setSettings(defaultSettings());
         } else {
           const d: any = s.data();
@@ -154,7 +193,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       }, (e) => { console.error(e); setGoalsBlocked(true); }));
     });
     return () => { off(); unsubs.forEach((f) => f()); };
-  }, [fail]);
+  }, [fail, nonce]);
 
   useEffect(() => { applyTheme(settings.theme); }, [settings.theme]);
   useEffect(() => { if (status === "ready") applyPalette(settings.palette); }, [settings.palette, status]);
@@ -173,7 +212,61 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           : "Connexion impossible, réessaie.");
     }
   }, []);
-  const logout = useCallback(() => { signOut(fb().auth); }, []);
+  const logout = useCallback(() => { setAuthError(""); signOut(fb().auth); }, []);
+
+  const signInEmail = useCallback(async (email: string, pw: string) => {
+    setAuthError(""); setAuthBusy(true);
+    try { await signInWithEmailAndPassword(fb().auth, email.trim(), pw); }
+    catch (e) { setAuthError(authMessage(e)); }
+    setAuthBusy(false);
+  }, []);
+
+  const signUpEmail = useCallback(async (email: string, pw: string, rawCode: string) => {
+    const code = normCode(rawCode); setAuthError("");
+    if (!code) { setAuthError("Entre ton code d’invitation."); return; }
+    if (pw.length < 8) { setAuthError(authMessage({ code: "auth/weak-password" })); return; }
+    const { auth, db } = fb(); setAuthBusy(true);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, email.trim(), pw);
+      try { await redeem(db, cred.user.uid, code); }
+      catch (e) { await deleteUser(cred.user).catch(() => signOut(auth)); throw e; }   // pas de compte orphelin si le code est refusé
+      await sendEmailVerification(cred.user).catch(() => {});
+    } catch (e) { setAuthError(authMessage(e)); }
+    setAuthBusy(false);
+  }, []);
+
+  const resetPassword = useCallback(async (email: string) => {
+    setAuthError("");
+    if (!email.trim()) { setAuthError("Entre d’abord ton adresse e-mail."); return; }
+    try { await sendPasswordResetEmail(fb().auth, email.trim()); notify("E-mail de réinitialisation envoyé (pense à regarder les spams)."); }
+    catch (e) { setAuthError(authMessage(e)); }
+  }, [notify]);
+
+  const redeemCode = useCallback(async (rawCode: string) => {
+    const code = normCode(rawCode); const { auth, db } = fb(); const u = auth.currentUser;
+    if (!u) return; if (!code) { setAuthError("Entre ton code d’invitation."); return; }
+    setAuthError(""); setAuthBusy(true);
+    try { await redeem(db, u.uid, code); notify("Bienvenue sur PolyBudget !"); setNonce((n) => n + 1); }
+    catch (e) { setAuthError(authMessage(e)); }
+    setAuthBusy(false);
+  }, [notify]);
+
+  const checkVerified = useCallback(async () => {
+    const u = fb().auth.currentUser; if (!u) return;
+    setAuthBusy(true); setAuthError("");
+    try {
+      await u.reload(); await u.getIdToken(true);
+      if (u.emailVerified) setNonce((n) => n + 1);
+      else setAuthError("Adresse pas encore vérifiée. Clique sur le lien reçu par e-mail, puis réessaie.");
+    } catch (e) { setAuthError(authMessage(e)); }
+    setAuthBusy(false);
+  }, []);
+
+  const resendVerification = useCallback(async () => {
+    const u = fb().auth.currentUser; if (!u) return;
+    try { await sendEmailVerification(u); notify("E-mail renvoyé (pense à regarder les spams)."); }
+    catch (e) { setAuthError(authMessage(e)); }
+  }, [notify]);
 
   // Firestore met les écritures en file d’attente hors ligne : on n’attend pas le serveur.
   const saveTx = useCallback((data: Omit<Tx, "id">, id?: string) => {
@@ -341,11 +434,36 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     catch (e) { fail(e); }
   }, [txs, notify, fail]);
 
+  /** Supprime toutes les données du compte puis le compte lui-même (RGPD). */
+  const deleteAccount = useCallback(async () => {
+    const { auth, db } = fb(); const u = auth.currentUser; const { txCol, goalCol, appRef } = refs.current;
+    if (!u || !txCol || !goalCol || !appRef) return;
+    const last = Date.parse(u.metadata.lastSignInTime || "");
+    if (!last || Date.now() - last > 4 * 60 * 1000) {
+      alert("Par sécurité, reconnecte-toi juste avant de supprimer ton compte. Tu vas être déconnecté : reconnecte-toi puis relance la suppression.");
+      signOut(auth); return;
+    }
+    if (!confirm("Supprimer définitivement ton compte et toutes tes données (transactions, objectifs, profil) ?")) return;
+    if (!confirm("Dernière confirmation : cette action est irréversible.")) return;
+    deleting.current = true;
+    try {
+      await commitInChunks([
+        ...txs.map((t) => (b: any) => b.delete(doc(txCol, t.id))),
+        ...goals.map((g) => (b: any) => b.delete(doc(goalCol, g.id))),
+        (b: any) => b.delete(appRef),
+        (b: any) => b.delete(doc(db, "members", u.uid)),
+      ]);
+      await deleteUser(u);
+      alert("Ton compte et tes données ont été supprimés.");
+    } catch (e) { deleting.current = false; fail(e); }
+  }, [txs, goals, fail]);
+
   const value = useMemo<Store>(() => ({
     status, user, settings, txs, toast, success, authError, signIn, logout, saveTx, deleteTx,
     patchSettings, setBudget, notify, exportData, importFile, wipeAll, cats, catById,
     goals, goalsBlocked, saveGoal, deleteGoal, depositGoal,
-  }), [goals, goalsBlocked, saveGoal, deleteGoal, depositGoal, status, user, settings, txs, toast, success, authError, signIn, logout, saveTx, deleteTx,
+    authBusy, setAuthError, signInEmail, signUpEmail, resetPassword, redeemCode, checkVerified, resendVerification, deleteAccount,
+  }), [authBusy, signInEmail, signUpEmail, resetPassword, redeemCode, checkVerified, resendVerification, deleteAccount, goals, goalsBlocked, saveGoal, deleteGoal, depositGoal, status, user, settings, txs, toast, success, authError, signIn, logout, saveTx, deleteTx,
     patchSettings, setBudget, notify, exportData, importFile, wipeAll, cats, catById]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

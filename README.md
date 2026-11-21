@@ -84,3 +84,10 @@ Les données sont compatibles avec la v1, donc tu retrouves toutes tes transacti
 - **Aucun secret dans le code** : la configuration Firebase est publique par conception, et la protection vient des règles. `.env.local` est exclu de Git.
 - **Clé API** : à restreindre dans Google Cloud Console aux domaines `localhost` et `<pseudo>.github.io`.
 - **Comptes** : active la double authentification sur ton compte Google et sur GitHub.
+
+## Inviter des testeurs
+
+1. Firebase > Authentification > Méthode de connexion : activer **Adresse e-mail/Mot de passe**.
+2. Firestore > Données : créer la collection `invites`, avec un document dont l'**ID est le code** (en majuscules, par exemple `POLY-TEST-7K2X`) et un champ `remaining` (number) égal au nombre de places.
+3. Les testeurs créent leur compte avec ce code (par e-mail ou avec Google). Chaque inscription retire une place.
+4. Pour retirer l'accès à quelqu'un : supprimer son document dans la collection `members`.

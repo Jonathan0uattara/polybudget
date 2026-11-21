@@ -21,6 +21,7 @@ export function fb() {
   if (!app) {
     app = getApps()[0] || initializeApp(firebaseConfig);
     auth = getAuth(app);
+    auth.languageCode = "fr";                 // e-mails de vérification et de réinitialisation en français
     try {
       db = initializeFirestore(app, {
         localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),

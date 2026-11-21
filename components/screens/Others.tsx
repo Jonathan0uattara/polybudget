@@ -259,7 +259,7 @@ const Swatches = styled.div`
 export function SettingsScreen({ go }: { go: (t: string) => void }) {
   const [uiStyle, setUiStyle] = useState("classic");
   useEffect(() => { setUiStyle(currentStyle()); }, []);
-  const { user, settings, cats, patchSettings, logout, exportData, importFile, wipeAll, notify, txs } = useStore();
+  const { user, settings, cats, patchSettings, logout, exportData, importFile, wipeAll, notify, txs, deleteAccount } = useStore();
   const fileRef = useRef<HTMLInputElement>(null);
   const [nc, setNc] = useState<{ name: string; type: TxType; icon: string; h: number }>({ name: "", type: "out", icon: "tag", h: 38 });
   const display = [settings.profile?.firstName, settings.profile?.lastName].filter(Boolean).join(" ") || settings.name || user?.displayName || "";
@@ -347,6 +347,9 @@ export function SettingsScreen({ go }: { go: (t: string) => void }) {
       </Card>
       <div style={{ marginTop: 28 }}>
         <PillButton $variant="soft" $block onClick={() => confirm("Te déconnecter de cet appareil ?") && logout()}><LogOut size={18} />Se déconnecter</PillButton>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <PillButton $variant="danger" $block onClick={deleteAccount}><Trash2 size={18} />Supprimer mon compte</PillButton>
       </div>
       <p style={{ textAlign: "center", color: "var(--pb-muted)", fontSize: 13, marginTop: 16 }}>PolyBudget v2 · {user?.email}</p>
     </Screen>

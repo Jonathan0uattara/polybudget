@@ -2,7 +2,7 @@ rules_version = '2';
 
 // =====================================================================
 //  Règles de sécurité PolyBudget
-//  1. Seul TON compte (liste ALLOWED) peut accéder à la base.
+//  1. Accès réservé à toi et aux membres invités (code d'invitation à places limitées).
 //  2. Chaque compte ne voit que ses propres données.
 //  3. Les données écrites sont vérifiées (types, tailles, formats).
 //  Tout ce qui n'est pas explicitement autorisé est refusé.
@@ -10,11 +10,17 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ⚠️ Remplace COLLE_TON_UID_ICI par ton UID
-    // (Console Firebase > Authentification > Utilisateurs > colonne « UID de l'utilisateur »).
-    function allowed() {
+    // Accès : toi (administrateur), ou un membre invité dont l'e-mail est vérifié.
+    function isAdmin() {
+      return request.auth != null && request.auth.uid in ['1pcmET76WYcAXPoesB7N6eX2k4F3'];
+    }
+    function isMember() {
       return request.auth != null
-        && request.auth.uid in ['1pcmET76WYcAXPoesB7N6eX2k4F3'];
+        && request.auth.token.email_verified == true
+        && exists(/databases/$(database)/documents/members/$(request.auth.uid));
+    }
+    function allowed() {
+      return isAdmin() || isMember();
     }
 
     function isOwner(userId) {
@@ -46,7 +52,33 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isOwner(userId);
       allow create, update: if isOwner(userId) && validSettings(request.resource.data);
-      allow delete: if false;
+      allow delete: if isOwner(userId);
+    }
+
+    // Codes d'invitation : créés par toi dans la console, jamais lisibles depuis l'app.
+    // Une inscription retire exactement une place, en même temps que la création de la fiche membre.
+    match /invites/{code} {
+      allow read, create, delete: if false;
+      allow update: if request.auth != null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['remaining'])
+        && request.resource.data.remaining == resource.data.remaining - 1
+        && !exists(/databases/$(database)/documents/members/$(request.auth.uid))
+        && existsAfter(/databases/$(database)/documents/members/$(request.auth.uid))
+        && getAfter(/databases/$(database)/documents/members/$(request.auth.uid)).data.code == code;
+    }
+
+    // Fiche membre : créée une seule fois avec un code valide qui a encore des places.
+    match /members/{uid} {
+      allow get: if request.auth != null && request.auth.uid == uid;
+      allow create: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['code', 'at'])
+        && request.resource.data.code is string && request.resource.data.code.size() <= 40
+        && exists(/databases/$(database)/documents/invites/$(request.resource.data.code))
+        && get(/databases/$(database)/documents/invites/$(request.resource.data.code)).data.remaining > 0
+        && getAfter(/databases/$(database)/documents/invites/$(request.resource.data.code)).data.remaining
+           == get(/databases/$(database)/documents/invites/$(request.resource.data.code)).data.remaining - 1;
+      allow update: if false;
+      allow delete: if request.auth != null && request.auth.uid == uid;
     }
 
     function validGoal(d) {
