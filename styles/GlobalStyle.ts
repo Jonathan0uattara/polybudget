@@ -97,7 +97,7 @@ export const GlobalStyle = createGlobalStyle`
 
   *,*::before,*::after{ box-sizing:border-box; }
   html{ -webkit-text-size-adjust:100%; }
-  html,body{ margin:0; min-height:100%; background:var(--pb-bg); }
+  html,body{ margin:0; min-height:100%; background:var(--pb-bg); overscroll-behavior-y:none; }  /* pas de rechargement en tirant l’écran vers le bas */
   body{
     color:var(--pb-ink); font-family:var(--pb-font-ui); font-size:16px; line-height:1.45;
     -webkit-font-smoothing:antialiased; -webkit-tap-highlight-color:transparent;

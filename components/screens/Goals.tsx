@@ -9,6 +9,7 @@ import {
   parseAmount, safeUrl, shortDate,
 } from "@/lib/format";
 import { compressImage } from "@/lib/image";
+import { DRAFT_GOAL, clearDraft, loadDraft, saveDraft } from "@/lib/persist";
 import { Card, Empty, FieldLabel, ICONS, Input, PillButton, Progress, Segmented } from "../ui";
 import { Sheet } from "../overlays";
 
@@ -67,7 +68,12 @@ export function GoalsView() {
   const { goals, goalsBlocked } = useStore();
   const [cat, setCat] = useState("all");
   const [sort, setSort] = useState<Sort>("recent");
-  const [form, setForm] = useState<null | { goal?: Goal }>(null);
+  const [form, setForm] = useState<null | { goal?: Goal; draft?: any }>(null);
+  // Saisie d’objectif interrompue (app fermée par le téléphone) : on la rouvre telle quelle.
+  useEffect(() => {
+    const d = loadDraft(DRAFT_GOAL);
+    if (d) setForm({ goal: d.goalId ? goals.find((g) => g.id === d.goalId) : undefined, draft: d });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [openId, setOpenId] = useState<string | null>(null);
 
   const used = GOAL_CATS.filter((c) => goals.some((g) => g.cat === c.id));
@@ -146,7 +152,8 @@ const Stack = styled.div` display:grid; gap:14px; grid-template-columns:minmax(0
 const Two = styled.div` display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.3fr); gap:10px; align-items:end; `;
 const CatChips = styled.div` display:flex; gap:8px; flex-wrap:wrap; `;
 
-function GoalForm({ state, onClose }: { state: null | { goal?: Goal }; onClose: () => void }) {
+function GoalForm({ state, onClose: closeForm }: { state: null | { goal?: Goal; draft?: any }; onClose: () => void }) {
+  const onClose = () => { clearDraft(DRAFT_GOAL); closeForm(); };
   const { saveGoal, notify } = useStore();
   const editing = state?.goal;
   const fileRef = useRef<HTMLInputElement>(null);
@@ -155,10 +162,19 @@ function GoalForm({ state, onClose }: { state: null | { goal?: Goal }; onClose: 
   const [rPeriod, setRPeriod] = useState<Period>("month"); const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!state) return; const g = state.goal;
+    if (!state) return; const g = state.goal; const d = state.draft;
+    if (d) {
+      setName(d.name || ""); setPrice(d.price || ""); setCat(d.cat || "achat"); setLink(d.link || "");
+      setPhoto(d.photo || ""); setRAmount(d.rAmount || ""); setRPeriod(d.rPeriod || "month"); return;
+    }
     setName(g?.name || ""); setPrice(g ? centsToInput(g.price) : ""); setCat(g?.cat || "achat"); setLink(g?.link || "");
     setPhoto(g?.photo || ""); setRAmount(g?.rAmount ? centsToInput(g.rAmount) : ""); setRPeriod(g?.rPeriod || "month");
   }, [state]);
+
+  useEffect(() => {
+    if (!state) return;
+    if (name.trim() || price || photo) saveDraft(DRAFT_GOAL, { name, price, cat, link, photo, rAmount, rPeriod, goalId: editing?.id });
+  }, [state, name, price, cat, link, photo, rAmount, rPeriod, editing?.id]);
 
   const pick = async (f?: File) => {
     if (!f) return; setBusy(true);

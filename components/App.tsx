@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import styled from "styled-components";
 import { AnimatePresence, motion } from "framer-motion";
 import { House, List, Plus, Settings2, Target } from "lucide-react";
@@ -11,7 +11,8 @@ import { Budgets, History, SettingsScreen } from "./screens/Others";
 import { InviteGate, Login, VerifyEmail } from "./screens/Access";
 import { ProfileScreen, ReportScreen } from "./screens/ProfileReport";
 import TxSheet, { SheetState } from "./TxSheet";
-import { Success, Toast } from "./overlays";
+import { Success, Toast, handleBack } from "./overlays";
+import { DRAFT_TX, NAV_KEY, loadDraft, saveDraft } from "@/lib/persist";
 
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
@@ -88,13 +89,48 @@ const Splash = styled.div`
 `;
 
 function Shell() {
-  const { status, toast, success } = useStore();
+  const { status, toast, success, txs, notify } = useStore();
   const [tab, setTab] = useState("home");
   const navTab = tab === "profile" ? "settings" : tab === "report" ? "home" : tab === "goals" ? "budgets" : tab;
   const [month, setMonth] = useState(ymOf(new Date()));
   const [sheet, setSheet] = useState<SheetState>(null);
 
-  const go = (t: string) => { setTab(t); window.scrollTo({ top: 0 }); };
+  const tabRef = useRef(tab); tabRef.current = tab;
+  const go = (t: string) => {
+    if (t !== tabRef.current) history.pushState({ pbTab: t }, "");   // le geste retour revient à l’écran précédent
+    setTab(t); window.scrollTo({ top: 0 });
+  };
+
+  /* Au démarrage : reprendre là où on en était, préparer le geste retour, rouvrir une saisie interrompue. */
+  const armed = useRef(false);
+  useEffect(() => {
+    if (status !== "ready" || armed.current) return;
+    armed.current = true;
+    const nav = loadDraft<{ tab: string; month: string }>(NAV_KEY, 30 * 60 * 1000);
+    const start = nav?.tab && nav.tab !== "profile" ? nav.tab : "home";
+    if (nav?.month) setMonth(nav.month);
+    setTab(start);
+    history.replaceState({ pbTab: "home", root: true }, "");
+    history.pushState({ pbTab: start }, "");
+    const d = loadDraft(DRAFT_TX);
+    if (d) { setSheet({ tx: d.txId ? txs.find((x) => x.id === d.txId) : undefined, type: d.type, draft: d }); notify("Saisie en cours restaurée"); }
+
+    let rearm: any;
+    const onPop = (e: PopStateEvent) => {
+      if (handleBack()) return;                         // une feuille ouverte a été fermée
+      const st = e.state || {};
+      setTab(st.pbTab || "home"); window.scrollTo({ top: 0 });
+      if (st.root) {                                    // dernier écran : un second retour quitte l’app
+        notify("Fais encore retour pour quitter PolyBudget");
+        clearTimeout(rearm);
+        rearm = setTimeout(() => { if (history.state?.root) history.pushState({ pbTab: "home" }, ""); }, 2500);
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => { window.removeEventListener("popstate", onPop); clearTimeout(rearm); };
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { if (status === "ready") saveDraft(NAV_KEY, { tab, month }); }, [tab, month, status]);
   const openTx = (type?: "in" | "out") => setSheet({ type: type || "out" });
   const onEdit = (tx: Tx) => setSheet({ tx });
 

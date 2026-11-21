@@ -6,9 +6,11 @@ import { CalendarDays, PenLine } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { Tx, TxType, centsToInput, parseAmount, todayISO } from "@/lib/format";
 import { Sheet, Keypad, pushKey } from "./overlays";
+import { DRAFT_TX, clearDraft, saveDraft } from "@/lib/persist";
 import { CatIcon, PillButton, Segmented } from "./ui";
 
-export type SheetState = null | { tx?: Tx; type?: TxType };
+export interface TxDraft { type: TxType; amount: string; cat: string; date: string; note: string; txId?: string }
+export type SheetState = null | { tx?: Tx; type?: TxType; draft?: TxDraft };
 
 const AmountBox = styled.div`
   text-align:center; margin:22px 0 4px;
@@ -39,7 +41,9 @@ const Fields = styled.div`
   input[type="date"]{ padding-right:10px; }
 `;
 
-export default function TxSheet({ state, onClose }: { state: SheetState; onClose: () => void }) {
+export default function TxSheet({ state, onClose: closeSheet }: { state: SheetState; onClose: () => void }) {
+  // Fermer volontairement efface le brouillon ; une fermeture forcée de l’app le conserve.
+  const onClose = () => { clearDraft(DRAFT_TX); closeSheet(); };
   const { cats, saveTx, deleteTx, notify } = useStore();
   const editing = state?.tx;
   const [type, setType] = useState<TxType>("out");
@@ -50,13 +54,19 @@ export default function TxSheet({ state, onClose }: { state: SheetState; onClose
 
   useEffect(() => {
     if (!state) return;
-    const t = state.tx;
+    const t = state.tx; const d = state.draft;
+    if (d) { setType(d.type); setAmount(d.amount); setCat(d.cat); setDate(d.date); setNote(d.note); return; }
     setType(t?.type || state.type || "out");
     setAmount(t ? centsToInput(t.amount) : "");
     setCat(t?.cat || (state.type === "in" ? "salaire" : "alim"));
     setDate(t?.date || todayISO());
     setNote(t?.note || "");
   }, [state]);
+
+  useEffect(() => {
+    if (!state) return;
+    if (amount || note.trim()) saveDraft(DRAFT_TX, { type, amount, cat, date, note, txId: editing?.id });
+  }, [state, type, amount, cat, date, note, editing?.id]);
 
   const list = useMemo(() => cats.filter((c) => (c.type || "out") === type), [cats, type]);
   useEffect(() => { if (list.length && !list.find((c) => c.id === cat)) setCat(list[0].id); }, [list, cat]);

@@ -1,9 +1,37 @@
 "use client";
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import styled from "styled-components";
 import { AnimatePresence, motion, PanInfo, useDragControls } from "framer-motion";
 import { Delete, X } from "lucide-react";
 import { RoundButton } from "./ui";
+
+/* ---------- Bouton / geste « retour » ----------
+ * Chaque feuille ouverte ajoute une étape dans l’historique du navigateur :
+ * le geste retour ferme la feuille au lieu de quitter l’app.
+ */
+type Layer = { popped: boolean; close: () => void };
+const layers: Layer[] = [];
+let ignorePops = 0;
+/** À appeler sur chaque « popstate » : renvoie true si l’événement a été pris en charge par une feuille. */
+export function handleBack(): boolean {
+  if (ignorePops > 0) { ignorePops--; return true; }
+  const top = layers.pop();
+  if (top) { top.popped = true; top.close(); return true; }
+  return false;
+}
+export function useBackLayer(open: boolean, onClose: () => void) {
+  const ref = useRef(onClose); ref.current = onClose;
+  useEffect(() => {
+    if (!open || typeof window === "undefined") return;
+    const entry: Layer = { popped: false, close: () => ref.current() };
+    layers.push(entry);
+    history.pushState({ ...(history.state || {}), pbLayer: true }, "");
+    return () => {
+      const i = layers.indexOf(entry); if (i >= 0) layers.splice(i, 1);
+      if (!entry.popped) { ignorePops++; history.back(); }   // fermée par un bouton : on retire l’étape ajoutée
+    };
+  }, [open]);
+}
 
 /* ---------- Feuille (bottom sheet) avec geste de fermeture ---------- */
 const Scrim = styled(motion.div)`
@@ -31,6 +59,7 @@ const Head = styled.div`
 export function Sheet({ open, onClose, title, children }: {
   open: boolean; onClose: () => void; title: string; children: React.ReactNode;
 }) {
+  useBackLayer(open, onClose);
   useEffect(() => {
     if (!open) return;
     const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
